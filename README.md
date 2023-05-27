@@ -72,9 +72,6 @@ Cloud-init v. 23.1.2-0ubuntu0~20.04.1 finished at Fri, 26 May 2023 00:49:53 +000
 
 ```
 
-## Workflow
-
-
 ## Usage
 ```
  aws cloudformation deploy --stack-name cf-init --template-file cf-init.yaml
