@@ -1,0 +1,292 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  AWS Cloudformation template with cfn-init, cfn-signal and cfn-hup: Create a Python/Flask and Postgresql stack.
+  Review the parameters in order to suit your needs.
+Parameters:
+  CIDRBlock:
+    Description: The IPv4 CIDR block for the VPC.
+    Type: String
+    Default: "10.0.0.0/16"
+  CIDRBlockSubnet:
+    Description: The IPv4 CIDR block for the subnet.
+    Type: String
+    Default: "10.0.1.0/24"
+  EnableDNSHostnames:
+    Description: A boolean flag to enable/disable DNS hostnames in the VPC.
+    Type: String
+    Default: true
+    AllowedValues:
+      - true
+      - false
+  EnableDNSSupport:
+    Description: A boolean flag to enable/disable DNS support in the VPC. 
+    Type: String
+    Default: true
+    AllowedValues:
+      - true
+      - false
+  EC2InstanceType:
+    Description: Specifies the EC2 instance type and determines the hardware of the host computer used for your instance.
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t1.micro
+      - t2.nano
+      - t2.micro
+      - t2.small
+    ConstraintDescription: must be a valid EC2 instance type.
+  UbuntuAMI:
+    Description: Last Ubuntu AMI ID
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/focal/stable/current/amd64/hvm/ebs-gp2/ami-id
+  Environment:
+    Description: Select an environment.
+    Type: String
+    Default: development
+  MapPublicIpOnLaunch:
+    Description: Specify true to indicate that instances launched into the subnet should be assigned a public IP address.
+    Type: String
+    Default: true
+    AllowedValues:
+      - true
+      - false
+  DBName:
+    Description: Database name
+    Type: String
+    Default: test
+  DBUser:
+    Description: Database admin username
+    Type: String
+    Default: test
+  DBPassword:
+    NoEcho: true
+    Description: Database admin pasword
+    Type: String
+    Default: test
+  TableName:
+    Description: Table name
+    Type: String
+    Default: session
+Resources:
+  WebServerKeyPair:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: deployer
+      PublicKeyMaterial: ssh-rsa 
+  WebServerVpc:
+    Type: AWS::EC2::VPC
+    DependsOn: WebServerKeyPair
+    Properties:
+      EnableDnsHostnames: !Ref EnableDNSHostnames
+      EnableDnsSupport: !Ref EnableDNSSupport
+      CidrBlock: !Ref CIDRBlock
+  Igw:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: "environment"
+          Value: !Ref Environment
+  IgwAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId:
+        Ref: Igw
+      VpcId:
+        Ref: WebServerVpc
+  WebServerSubnet:
+    Type: AWS::EC2::Subnet
+    DependsOn: IgwAttachment
+    Properties:
+      MapPublicIpOnLaunch: !Ref MapPublicIpOnLaunch
+      CidrBlock: !Ref CIDRBlockSubnet
+      VpcId:
+        Ref: WebServerVpc
+  WebServerRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: WebServerVpc
+  WebServerRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      GatewayId:
+        Ref: Igw
+      DestinationCidrBlock: "0.0.0.0/0"
+      RouteTableId:
+        Ref: WebServerRouteTable
+  WebServerSubnetRouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: WebServerSubnet
+      RouteTableId:
+        Ref: WebServerRouteTable
+  WebServerInstance:
+    Type: AWS::EC2::Instance
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          setup:
+            - install
+            - configure
+        install:
+          packages:
+            apt:
+              postgresql: []
+              postgresql-contrib: []
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+                verbose=true
+                interval: 2
+              mode: 000400
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.WebServerInstance.Metadata.AWS::CloudFormation::Init
+                action=/usr/local/bin/cfn-init cfn-init -v --stack ${AWS::StackName} -r WebServerInstance -c setup --region ${AWS::Region}
+                runas=root
+              mode: 000400
+              owner: root
+              group: root
+            /lib/systemd/system/cfn-hup.service:
+              content: !Sub |
+                [Unit]
+                Description=cfn-hup daemon
+                [Service]
+                Type=simple
+                ExecStart=/usr/local/bin/cfn-hup
+                Restart=always
+                [Install]
+                WantedBy=multi-user.target
+          commands:
+            04start_cfn_hup:
+              command: systemctl start cfn-hup && systemctl enable cfn-hup  
+        configure:
+          commands:
+            01create_project_dir:
+              command: mkdir -p /opt/app
+            02install_flask:
+              command: pip3 install flask
+            03display_flask_version:
+              command: python3 -m flask --version
+          files:
+            /tmp/init-db.sql:
+              content: !Sub |
+                create database ${DBName};
+                \c ${DBName}
+                create user ${DBUser} with password '${DBPassword}';
+                grant all privileges on database ${DBName} to ${DBUser};
+                \c ${DBName} ${DBUser}
+                create table session(session_id varchar(80) not null);
+                insert into session(session_id) values('ce05af8fda5ea848e8e0465c6d28974f879ab57231de5e6fc96503df31670f20');
+
+              mode: "000400"
+              owner: "postgres"
+              group: "postgres"
+            /opt/app/app.py:
+              content: !Sub |
+                import psycopg2
+                from flask import Flask
+
+                app = Flask(__name__)
+                def db_connection():
+                  connection = psycopg2.connect(host="localhost",
+                                                database="${DBName}",
+                                                user="${DBUser}",
+                                                password="${DBPassword}")
+                  return connection
+
+                @app.route("/")
+                def hello():
+                  connection = db_connection()
+                  cur = connection.cursor()
+                  cur.execute("SELECT session_id FROM ${TableName}")
+                  session_id = cur.fetchone()
+                  cur.close()
+                  connection.close()
+                  return f"Hello, this is your session id: {session_id[0]}"
+
+                if __name__ == "__main__":
+                  app.run("0.0.0.0", port=80)
+              mode: "000400"
+              owner: "ubuntu"
+              group: "ubuntu"
+            /opt/app/run_app.sh:
+              content: !Sub |
+                #!/bin/bash
+                set -xe
+                sudo python3 /opt/app/app.py  > /opt/app/app_log.txt 2>&1 &
+              mode: "000510"
+              owner: "ubuntu"
+              group: "ubuntu"      
+          commands:
+            04update_pg_hab_conf:
+              command: sed -Ei 's/^(local\s+all\s+all\s+)peer$/\1trust/' /etc/postgresql/12/main/pg_hba.conf
+            05restart_postgresql:
+              command: sudo systemctl restart postgresql
+            06configure_database:
+              command: sudo -u postgres psql -f /tmp/init-db.sql
+            07run_flask_app:
+              command: sudo /opt/app/run_app.sh &
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT5M
+    Properties:
+      InstanceType: !Ref EC2InstanceType
+      ImageId: !Ref UbuntuAMI
+      KeyName: !Ref WebServerKeyPair
+      SecurityGroups:
+        - !Ref WebServerSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          sudo apt-get update -y
+          sudo apt-get -y install python3-pip
+          pip3 install flask
+          pip3 install psycopg2-binary
+          sudo pip3 install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
+          sudo ln -s /usr/local/init/ubuntu/cfn-hup /etc/init.d/cfn-hup
+          /usr/local/bin/cfn-init -s ${AWS::StackName} -r WebServerInstance --region ${AWS::Region} -c setup
+          sleep 5 && curl localhost|grep -q hello
+          /usr/local/bin/cfn-signal -e $? --stack ${AWS::StackId} --resource WebServerInstance --region ${AWS::Region}
+
+      Tags:
+        - Key: "environment"
+          Value: !Ref Environment
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+Outputs:
+  PublicIp:
+    Description: EC2 instance public IP
+    Value: !GetAtt WebServerInstance.PublicIp
+  WebServerUrl:
+    Description: Stack url
+    Value: !Join
+      - ''
+      - - 'http://'
+        - !GetAtt 
+          - WebServerInstance
+          - PublicDnsName
+  SubnetCidrBlock:
+    Description: Cidr Block for subnet
+    Value: !Ref WebServerSubnet
+
