@@ -61,7 +61,6 @@ Associate the CreationPolicy attribute with a resource to prevent its status fro
 
 Check the /var/log/cloud-init-output.log for information about cfn-init and cnf-signal.
 
-cloud-init-output.log
 ```
 Successfully installed aws-cfn-bootstrap-2.0 chevron-0.14.0 docutils-0.20.1 lockfile-0.12.2 python-daemon-2.1.2
 + sudo ln -s /usr/local/init/ubuntu/cfn-hup /etc/init.d/cfn-hup
