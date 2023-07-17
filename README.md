@@ -65,7 +65,7 @@ Check the /var/log/cloud-init-output.log for information about cfn-init and cnf-
 Successfully installed aws-cfn-bootstrap-2.0 chevron-0.14.0 docutils-0.20.1 lockfile-0.12.2 python-daemon-2.1.2
 + sudo ln -s /usr/local/init/ubuntu/cfn-hup /etc/init.d/cfn-hup
 + /usr/local/bin/cfn-init -s cf-init -r WebServerInstance --region us-east-2 -c setup
-+ /usr/local/bin/cfn-signal -e 0 --stack arn:aws:cloudformation:us-east-2:187871168870:stack/cf-init/e94d7aa0-fb5e-11ed-bb58-062dee8e8c61 --resource WebServerInstance --region us-east-2
++ /usr/local/bin/cfn-signal -e 0 --stack arn:aws:cloudformation:us-east-2:187871121909:stack/cf-init/e94d7aa0-fb5e-11ed-bb58-062dee8e8c61 --resource WebServerInstance --region us-east-2
 Cloud-init v. 23.1.2-0ubuntu0~20.04.1 running 'modules:final' at Fri, 26 May 2023 00:48:34 +0000. Up 21.59 seconds.
 Cloud-init v. 23.1.2-0ubuntu0~20.04.1 finished at Fri, 26 May 2023 00:49:53 +0000. Datasource DataSourceEc2Local.  Up 100.86 seconds
 
